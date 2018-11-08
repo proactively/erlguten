@@ -62,8 +62,8 @@ mk_images([{ImageURI, #image{alias=Alias}=Im}|T], I, Fs, E) ->
   end,
   mk_images(T, J+1, [{Alias, I} | Fs], List).
  
-mk_image(I, File, #image{alias=_Alias, width=W, height=H}) ->
-    Image = read_image(File),
+mk_image(I, File, #image{alias=_Alias, width=W, height=H, data=Data}) ->
+    Image = read_image(File, Data),
     case process_header(Image) of
 	{jpeg_head,{Width, Height, Ncomponents, Data_precision}} ->
 	    Extras = [{"Filter", {name,"DCTDecode"}},
@@ -73,7 +73,7 @@ mk_image(I, File, #image{alias=_Alias, width=W, height=H}) ->
 		      J = I,
 		      ExtraObj = [];
 	{png_head,{Width, Height, Ncomponents, Data_precision}} ->
-	  [_Params, _MoreParams, Palette, Image2 , Alpha_channel] = get_png_content(File),
+	  [_Params, _MoreParams, Palette, Image2 , Alpha_channel] = get_png_content(File, Data),
 	  case Ncomponents of 
 	    0 ->
 	    Extras = [{"Filter", {name,"FlateDecode"}},
@@ -181,6 +181,13 @@ pngspace(3)-> {"DeviceGray", 1};
 pngspace(4)-> {"DeviceGray", 1};
 pngspace(6)-> {"DeviceRGB", 3}.
 
+read_image(FilePath, undefined) ->
+    read_image(FilePath);
+read_image(_FilePath, Data) ->
+    Data.
+
+read_image({data, _Unique_path, Data}) ->
+    Data;
 read_image(File) ->
   case file:read_file(File) of
     {ok, Image} ->
@@ -191,7 +198,7 @@ read_image(File) ->
   end.
 
 %% @spec get_head_info(Filepath) -> {jpeg_head,{Width, Height, Number_of_components, Precision}}
-%% Filepath = string()
+%% Filepath = string() | {data, Uniquepath, Data}
 %% Width = integer()
 %% Height = integer()
 %% Number_of_components = integer()
@@ -312,6 +319,13 @@ png_head( <<_Length:32, $I:8, $H:8, $D:8, $R:8,
 %% Image2 has the image pixels. Alpha_channel has the transparaency overlay to control
 %% the display of the Image2 pixels.
 %%                
+get_png_content(File, undefined) ->
+    get_png_content(File);
+get_png_content(_File, Data) ->
+    process_png_header( Data ).
+
+get_png_content({data, _, Image}) ->
+    process_png_header( Image );
 get_png_content(File) ->
   case file:read_file(File) of
     {ok, Image} ->

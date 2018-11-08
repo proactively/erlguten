@@ -124,7 +124,6 @@ init_pdf_context()->
 
 %% @doc Spawn pdf building process
 new()->
-    io:format("New pdf~n",[]),
     {ok, PDF} = start_link( [init_pdf_context(), <<>>] ),
     PDF.
 
@@ -498,6 +497,7 @@ set_stroke_gray(PID, Gray)->
 %% image(PID, FilePath )
 %% image(PID, FilePath, Size)
 %% image(PID, FilePath, Pos, Size)
+%% Filepath is either the path to a file or {data, UniquePath, Binary}
 %% Pos is {X,Y}
 %% Size is {width, W} | {height, H} | {W,H} | {max, W, H} 
 %% The max Size version can be used to set a max limit on width, height or both
@@ -543,6 +543,8 @@ image1(PID, FilePath, {height, H}) ->
     image1(PID, FilePath, {size,{undefined,H}});
 image1(PID, FilePath, {W, H}) when is_integer(W), is_integer(H)->
     image1(PID, FilePath, {size,{W,H}});
+image1(PID, {data, _UniquePath, Data} = FilePath, {size, Size}) when is_binary(Data) ->
+    gen_server:cast(PID, {image, FilePath, Size});
 image1(PID, FilePath, {size,Size})->
     case file:open(FilePath,read) of
 	{ok,IO} -> 
@@ -1107,33 +1109,40 @@ ensure_font(Handler, FontList) ->
 %% the Postscript printing device. This is suppoed to be obsolete as of v. 1.4 PDFs. 
 
 handle_image(ImageDict, FilePath, Size, ProcSet)->
-    case dict:find(FilePath, ImageDict) of
+    {UniquePath, Data} = unique_image_path(FilePath),
+    case dict:find(UniquePath, ImageDict) of
 	{ok, #image{alias=Alias, width=W, height=H}} ->
 	    {ImageDict, Alias, set_size(Size,{W,H}), ProcSet };
 	error ->
 	    Alias = "Im" ++ eg_pdf_op:i2s(dict:size(ImageDict) + 1),
 	    case eg_pdf_image:get_head_info(FilePath) of
 		{jpeg_head,{W1, H1, Ncomponents, _Data_precision}} ->
-		    NewDict =dict:store(FilePath,
+		    NewDict =dict:store(UniquePath,
 					#image{alias  = Alias,
                                                width  = W1,
-                                               height = H1},
+                                               height = H1,
+                                               data = Data},
 					ImageDict),
 		    {NewDict, Alias, set_size(Size, {W1,H1}),
 		     imageBC(Ncomponents, ProcSet) };
 		{png_head,{W1, H1, Ncomponents, _Data_precision}} ->
-		    NewDict =dict:store(FilePath,
+		    NewDict =dict:store(UniquePath,
 					#image{alias  = Alias,
                                                width  = W1,
-                                               height = H1},
+                                               height = H1,
+                                               data = Data},
 					ImageDict),
 		    {NewDict, Alias, set_size(Size, {W1,H1}),
 		     imageBC(Ncomponents, ProcSet) };
 		
 		A -> 
+                    io:format("Failed to get head_info\n"),
 		    {error_not_yet_implemented_image_format,A}
 	    end
     end.
+
+unique_image_path({data, UniquePath, Data}) -> {UniquePath, Data};
+unique_image_path(FilePath) -> {FilePath, undefined}.
 
 %% Function to scale the image properly if only width or height
 %% is set.

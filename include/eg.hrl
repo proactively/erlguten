@@ -63,7 +63,8 @@
 -record(image,{ alias,
                 width,
                 height,
-                mask        % image color key masking color values
+                mask,       % image color key masking color values
+                data
                 }).
 
 -record(box,{name=default,  %name of the box
