@@ -592,7 +592,7 @@ inBuiltFonts() ->
 %% Description: Starts the server
 %%--------------------------------------------------------------------
 start_link(Init) ->
-    gen_server:start_link({local,pdf}, ?MODULE, Init, []).
+    gen_server:start_link(?MODULE, Init, []).
 
 %%====================================================================
 %% gen_server callbacks
