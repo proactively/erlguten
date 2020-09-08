@@ -336,30 +336,32 @@ get_png_content(File) ->
   end.                     
 
 %% @doc recognize the header on a PNG image
+process_png_header(Image) ->
+    process_png_header(Image, Image).
 
-process_png_header( << 137:8, 80:8, 78:8, 71:8, 13:8, 10:8, 26:8, 10:8, Rest/binary >> )->
-        process_png(Rest, [], << >>, << >>, << >>, << >>).
+process_png_header( << 137:8, 80:8, 78:8, 71:8, 13:8, 10:8, 26:8, 10:8, Rest/binary >>, OrigImage )->
+        process_png(Rest, [], << >>, << >>, << >>, << >>, OrigImage).
                         
 process_png( <<_Length:32, $I:8, $H:8, $D:8, $R:8, 
               Width:32/integer, Height:32/integer, Data_precision:8/integer, 
               Color_type:8/integer, Compression:8/integer, Filter_method:8/integer,
               Interface_method:8/integer, _CRC:32, Rest/binary >>, 
-              _Params, _MoreParams, Palette, Image, Alpha_channel) ->
+              _Params, _MoreParams, Palette, Image, Alpha_channel, OrigImage) ->
         process_png( Rest,{png_head,{Width, Height, Color_type, Data_precision}},
-                {params, Compression, Filter_method, Interface_method, undefined}, Palette, Image, Alpha_channel);
+                {params, Compression, Filter_method, Interface_method, undefined}, Palette, Image, Alpha_channel, OrigImage);
         
 process_png( <<Length:32, $P:8, $L:8, $T:8, $E:8,  Data:Length/binary-unit:8, _CRC:32, Rest/binary >>, 
-              Params, MoreParams, Palette, Image, Alpha_channel) ->
-        process_png( Rest, Params, MoreParams, << Palette/bits, Data/bits>>, Image, Alpha_channel);
+              Params, MoreParams, Palette, Image, Alpha_channel, OrigImage) ->
+        process_png( Rest, Params, MoreParams, << Palette/bits, Data/bits>>, Image, Alpha_channel, OrigImage);
         
 process_png( <<Length:32, $I:8, $D:8, $A:8, $T:8,  Data:Length/binary-unit:8, _CRC:32, Rest/binary >>, 
-              Params, MoreParams, Palette, Image, Alpha_channel) ->
-        process_png( Rest, Params, MoreParams, Palette, << Image/bits , Data/bits>> , Alpha_channel);
+              Params, MoreParams, Palette, Image, Alpha_channel, OrigImage) ->
+        process_png( Rest, Params, MoreParams, Palette, << Image/bits , Data/bits>> , Alpha_channel, OrigImage);
 
 process_png( <<Length:32, $t:8, $R:8, $N:8, $S:8,  Data:Length/binary-unit:8, _CRC:32, Rest/binary >>, Params, 
               {params, Compression, Filter_method, Interface_method, 
                 Transparency, Indexed_alpha, Grayval, Red, Green, Blue},
-              Palette, Image, Alpha_channel) ->
+              Palette, Image, Alpha_channel, OrigImage) ->
         {png_head,{_Width, _Height, Color_type, _Data_precision}} = Params,
         case Color_type of
           3 ->  Transparency = indexed,
@@ -371,7 +373,7 @@ process_png( <<Length:32, $t:8, $R:8, $N:8, $S:8,  Data:Length/binary-unit:8, _C
         end,
         process_png( Rest, Params, {params, Compression, Filter_method, Interface_method, 
                     Transparency, Indexed_alpha, Grayval, Red, Green, Blue}, 
-                    Palette, Image , Alpha_channel);
+                    Palette, Image , Alpha_channel, OrigImage);
                     
                
 process_png( <<_Length:32, $I:8, $E:8, $N:8, $D:8,  _Rest/binary >>, 
@@ -379,7 +381,7 @@ process_png( <<_Length:32, $I:8, $E:8, $N:8, $D:8,  _Rest/binary >>,
               MoreParams, 
               Palette, 
               Image, 
-              Alpha_channel) ->
+              Alpha_channel, OrigImage) ->
         {png_head,{_Width, _Height, Color_type, _Data_precision}} = Params,
         case Color_type of
           0 ->
@@ -389,10 +391,10 @@ process_png( <<_Length:32, $I:8, $E:8, $N:8, $D:8,  _Rest/binary >>,
           3 ->
               [Params, MoreParams, Palette, Image , Alpha_channel];
           4 ->
-              {ImageScan, AlphaCodes} = extractAlphaAndData(Params, Image),
+              {ImageScan, AlphaCodes} = extractAlphaAndData(Params, Image, OrigImage),
               [Params, MoreParams, Palette, ImageScan , AlphaCodes];
           6 ->        
-              {ImageScan, AlphaCodes} = extractAlphaAndData(Params, Image),
+              {ImageScan, AlphaCodes} = extractAlphaAndData(Params, Image, OrigImage),
               [Params, MoreParams, Palette, ImageScan , AlphaCodes]
           end;
         
@@ -401,35 +403,18 @@ process_png( <<Length:32/integer, _ID:32, _:Length/binary-unit:8, _CRC:32, Rest/
               MoreParams, 
               Palette, 
               Image, 
-              Alpha_channel) ->
-        process_png( Rest, Params, MoreParams, Palette, Image , Alpha_channel).  
+              Alpha_channel, OrigImage) ->
+        process_png( Rest, Params, MoreParams, Palette, Image , Alpha_channel, OrigImage).
  
         
                
          
 %% @doc Take the compressed image data and return the image and alpha channel data sompressed in seperate streams.
        
-extractAlphaAndData({png_head,{Width, _Height, Color_type, Data_precision}},Image) ->
+extractAlphaAndData({png_head,{_Width, _Height, _Color_type, _Data_precision}},_Image, OrigImage) ->
 
-%% decompress the ZLIB compressed bit stream
-  {ok,Decompressed} = inflate_stream(Image),
-    ok = file:write_file("original.bin",[Decompressed]),
-    
-%% calc the length of a scan line
-  Offset = ceiling( ((pngbits(Color_type) + 1) * Data_precision) /8),
-  ByteWidth = 1 + ceiling((Width * (pngbits(Color_type) + 1) * Data_precision) /8),
+  {png, {_W, _H, NewImage, AlphaChannel}} = erlpixels:read(OrigImage, [separate_alpha]),
 
-%% extract the scan lines into tuples of filter number and byte stream
-  AllScanLines = extractScanLines(ByteWidth,Decompressed),
-
-%% undo the filters applied to the scan lines
-  NoFilterImage = filterStream(AllScanLines, Offset),
-    ok = file:write_file("filtered.bin",[NoFilterImage]),
-    
-%% separate the image and alpha channel data streams
-  {NewImage,AlphaChannel} = breakoutLines({pngbits(Color_type)* Data_precision, Data_precision}, NoFilterImage),
-
-    
 %% compress the two streams and return them
   {ok,A} = deflate_stream(NewImage), 
   {ok,B} = deflate_stream(AlphaChannel),
